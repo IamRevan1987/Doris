@@ -27,3 +27,7 @@ Thumbs.db
 
 # ---- Notes / local commands ----
 systemctl cat ollama
+
+# ---- Local deps / big binaries ----
+interface_beta_qt/.qtcreator/
+resources/piper/voices/*.onnx
