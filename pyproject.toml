@@ -1,0 +1,10 @@
+[project]
+name = "doris"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "langchain-core>=1.2.7",
+    "langchain-ollama>=1.0.1",
+    "pyqt6>=6.10.2",
+]
