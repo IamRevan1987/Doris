@@ -1,0 +1,29 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+
+# ---- Virtual environments ----
+.venv/
+venv/
+
+# ---- IDE ----
+.idea/
+
+# ---- App runtime / memory ----
+data/
+tts/data/
+
+# ---- Audio outputs ----
+*.wav
+*.mp3
+
+# ---- Environment / secrets ----
+.env
+.env.*
+
+# ---- OS junk ----
+.DS_Store
+Thumbs.db
+
+# ---- Notes / local commands ----
+systemctl cat ollama
