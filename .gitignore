@@ -31,3 +31,7 @@ systemctl cat ollama
 # ---- Local deps / big binaries ----
 interface_beta_qt/.qtcreator/
 resources/piper/voices/*.onnx
+
+# prevent local qt/venv artifacts + big models
+interface_beta_qt/.qtcreator/
+resources/piper/voices/*.onnx
