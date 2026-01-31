@@ -186,7 +186,12 @@ def main() -> None:
             send_btn.setEnabled(True)
             chat_in.setEnabled(True)
             chat_in.setFocus()
-            _cleanup()
+            chat_in.setFocus()
+            
+            if chk_speak.isChecked():
+                on_speak_last()
+            
+            # _cleanup() moved to finished signal
 
         def on_err(msg: str) -> None:
             chat_out.append(f"[BACKEND ERROR] {msg}\n")
@@ -194,10 +199,11 @@ def main() -> None:
             send_btn.setEnabled(True)
             chat_in.setEnabled(True)
             chat_in.setFocus()
-            _cleanup()
+            # _cleanup() moved to finished signal
 
         worker.done.connect(on_done)
         worker.err.connect(on_err)
+        worker.finished.connect(_cleanup)
         worker.start()
 
     def on_speak_last() -> None:
@@ -218,15 +224,21 @@ def main() -> None:
             btn_play.setEnabled(True)
             btn_stop.setEnabled(True)
             status.showMessage("TTS ready")
-            _cleanup()
+            status.showMessage("TTS ready")
+            
+            if chk_speak.isChecked():
+                on_play()
+
+            # _cleanup() moved to finished signal
 
         def on_err(msg: str) -> None:
             chat_out.append(f"[TTS ERROR] {msg}\n")
             status.showMessage(msg)
-            _cleanup()
+            # _cleanup() moved to finished signal
 
         worker.done.connect(on_done)
         worker.err.connect(on_err)
+        worker.finished.connect(_cleanup)
         worker.start()
 
     def on_play() -> None:

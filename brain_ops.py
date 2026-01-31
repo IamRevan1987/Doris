@@ -13,8 +13,8 @@ import os
 @dataclass
 class ChatEngine:
     user_name: str = "David"
-    model_name: str = "doris-ministral:3b"
-    base_url: str = "http://127.0.0:11434"
+    model_name: str = "ministral-3:3b"
+    base_url: str = "http://127.0.0.1:11434"
     memory_path: Path = Path("data/chat.jsonl")
     tts_enabled: bool = True           # This will turn off all TTS
     tts: GhostVoiceEngine = field(init = False)
@@ -30,11 +30,16 @@ class ChatEngine:
     def backend_ok(self) -> bool:
         url = f"{self.base_url}/api/tags"
         try:
-            r = httpx.get(url, timeout=5.0)
+            r = httpx.get(url, timeout=2.0)
             print(f"[BACKEND_OK] url={url} status={r.status_code}")
             return r.status_code == 200
         except Exception as e:
-            print(f"[BACKEND_OK] url={url} EXC={type(e).__name__}: {e}")
+            # repr(e) gives a cleaner string for some connection errors
+            print(f"[BACKEND_ERR] url={url} EXC={type(e).__name__}: {repr(e)}")
+            if getattr(e, '__context__', None):
+                print(f"  __context__: {e.__context__}")
+            if getattr(e, '__cause__', None):
+                print(f"  __cause__: {e.__cause__}")
             return False
 
     def __post_init__(self) -> None:
@@ -101,11 +106,22 @@ class ChatEngine:
         self.history.append(HumanMessage(content = text))
         append_turn(self.memory_path, "user", text)
 
-        print(f"[SEND] base_url={self.base_url!r}")
-        if not self.backend_ok():
-            raise RuntimeError(f"Ollama not reachable at {self.base_url} (is ollama.service running?)")
+        print(f"[SEND] attempting generation. base_url={self.base_url!r}")
 
-        reply = self.llm.invoke(self.history)
+        # Retry logic: Try twice.
+        max_retries = 1
+        for attempt in range(max_retries + 1):
+            try:
+                reply = self.llm.invoke(self.history)
+                break
+            except Exception as e:
+                print(f"[SEND_ERR] attempt={attempt+1} error={e}")
+                if attempt < max_retries:
+                    import time
+                    time.sleep(0.5)
+                    continue
+                # If we're out of retries, re-raise the last exception
+                raise
 
         self.history.append(AIMessage(content = reply.content))
         append_turn(self.memory_path, "assistant", reply.content)
