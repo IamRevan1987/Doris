@@ -1,3 +1,6 @@
+from core.core_drivers import apply_cpu_limits      ##  SAFETY MEASURE, DO NOT REMOVE OR CHANGE THE POSITION OF THIS LINE  ##
+apply_cpu_limits()                                  ##  SAFETY MEASURE, DO NOT REMOVE OR CHANGE THE POSITION OF THIS LINE  ##
+#############################################################################################################################
 import sys, time
 from pathlib import Path
 from brain_ops import ChatEngine
@@ -57,6 +60,10 @@ def apply_theme(app, dark: bool) -> None:
 # -----------------------------
 
 class Worker(QThread):
+    """
+    CHAT worker only.
+    Emits a single string reply.
+    """
     done = pyqtSignal(str)
     err = pyqtSignal(str)
 
@@ -68,14 +75,49 @@ class Worker(QThread):
     def run(self) -> None:
         try:
             reply = self.engine.send(self.text)
-            self.done.emit(reply)
+            self.done.emit(str(reply))  # ALWAYS str
         except Exception as e:
             self.err.emit(str(e))
 
 
 class TTSWorker(QThread):
+    """
+    TTS worker only.
+    Emits a list[str] of WAV paths.
+    """
     done = pyqtSignal(list)
     err = pyqtSignal(str)
+
+    def __init__(self, engine: ChatEngine, text: str):
+        super().__init__()
+        self.engine = engine
+        self.text = text
+
+    def run(self) -> None:
+        try:
+            chunks = chunk_for_tts(self.text)
+
+            # Reset cached playlist for this synthesis run
+            if hasattr(self.engine, "clear_last_tts"):
+                self.engine.clear_last_tts()
+
+            for chunk in chunks:
+                self.engine.synthesize_text_to_wav(chunk)
+
+            if hasattr(self.engine, "get_last_tts_wavs"):
+                self.done.emit(self.engine.get_last_tts_wavs())
+            else:
+                self.done.emit([])
+
+        except Exception as e:
+            self.err.emit(str(e))
+
+
+
+class TTSWorker(QThread):
+    done = pyqtSignal(list)
+    err = pyqtSignal(str)
+
 
     def __init__(self, engine: ChatEngine, text: str):
         super().__init__()
@@ -107,7 +149,7 @@ def _panel_frame() -> QFrame:
 
 
 # -----------------------------
-# Main
+# Main                                        ###  ###  --  --  main()  --  --  ###  ###
 # -----------------------------
 
 def main() -> None:

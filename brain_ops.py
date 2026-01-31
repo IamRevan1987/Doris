@@ -1,3 +1,7 @@
+from core.core_drivers import apply_cpu_limits      ##  SAFETY MEASURE, DO NOT REMOVE OR CHANGE THE POSITION OF THIS LINE  ##
+from core.core_lock import exclusive_execution
+apply_cpu_limits()                                  ##  SAFETY MEASURE, DO NOT REMOVE OR CHANGE THE POSITION OF THIS LINE  ##
+#############################################################################################################################
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
 from tts.tts_config import piper_bin_path, voice_model_path, tts_out_dir
 from tts.ghost_voice import GhostVoiceConfig, GhostVoiceEngine
@@ -27,6 +31,8 @@ class ChatEngine:
 
     llm: ChatOllama = field(init=False)
     history: List[BaseMessage] = field(default_factory = list, init = False)
+    last_tts_wavs: list[str] = field(default_factory=list, init=False)
+    last_tts_idx: int = field(default=0, init=False)
 
     def backend_ok(self) -> bool:
         url = f"{self.base_url}/api/tags"
@@ -129,6 +135,8 @@ class ChatEngine:
             output_dir = tts_out_dir(),
         )
         self.tts = GhostVoiceEngine(cfg)
+        self.last_tts_wavs.clear()
+        self.last_tts_idx = 0
 
         system_msg = SystemMessage(
             content=(
@@ -153,14 +161,28 @@ class ChatEngine:
             elif role == "assistant":
                 self.history.append(AIMessage(content=content))
 
+    def get_last_tts_wavs(self) -> list[str]:
+        return list(self.last_tts_wavs)
+
+    def clear_last_tts(self) -> None:
+        self.last_tts_wavs.clear()
+        self.last_tts_idx = 0
+
     def synthesize_text_to_wav(self, text: str) -> Path:
         """
-        Explicit TTS call.
-        No autoplay. UI will decide when to call this.
+        High-level TTS entry point used by UI.
+        Returns a filesystem path to a WAV file.
         """
-        if not self.tts_enabled:
-            raise RuntimeError("TTS is disabled (tts_enabled = False).")
-        return self.tts.synthesize(text, filename_stem="reply")
+        # Ensure cache exists (belt + suspenders)
+        if not hasattr(self, "last_tts_wavs"):
+            self.last_tts_wavs = []
+            self.last_tts_idx = 0
+
+        # GhostVoiceEngine should already write a WAV to its configured output_dir
+        wav_path = self.tts.synthesize(text)
+
+        self.last_tts_wavs.append(str(wav_path))
+        return wav_path
 
     def send(self, text: str) -> str:
         text = text.strip()
@@ -176,7 +198,8 @@ class ChatEngine:
         max_retries = 1
         for attempt in range(max_retries + 1):
             try:
-                reply = self.llm.invoke(self.history)
+                with exclusive_execution("llm"):
+                    reply = self.llm.invoke(self.history)    ##  ##  LLM Execution - Initial call to the AI
                 break
             except Exception as e:
                 print(f"[SEND_ERR] attempt={attempt+1} error={e}")
@@ -187,9 +210,25 @@ class ChatEngine:
                 # If we're out of retries, re-raise the last exception
                 raise
 
-        self.history.append(AIMessage(content = reply.content))
-        append_turn(self.memory_path, "assistant", reply.content)
-        return reply.content
+        content = reply.content
+
+        # LangChain sometimes returns message content as a list of parts
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    # common shape: {"type": "text", "text": "..."}
+                    parts.append(str(item.get("text", "")))
+                else:
+                    parts.append(str(item))
+            content = "".join(parts).strip()
+        else:
+            content = str(content).strip()
+
+        self.history.append(AIMessage(content=content))
+        append_turn(self.memory_path, "assistant", content)
+        return content
+
 
 ###  ###  ###                                                 ###  ###  ###  --  --  main()  --  --  ###  ###
 
