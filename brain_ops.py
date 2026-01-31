@@ -1,9 +1,10 @@
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
 from tts.tts_config import piper_bin_path, voice_model_path, tts_out_dir
 from tts.ghost_voice import GhostVoiceConfig, GhostVoiceEngine
-from core_memories import load_turns, append_turn
+from core.core_memories import load_turns, append_turn
 from dataclasses import dataclass, field
 from langchain_ollama import ChatOllama
+from datetime import datetime
 from pathlib import Path
 from typing import List
 import httpx
@@ -41,6 +42,69 @@ class ChatEngine:
             if getattr(e, '__cause__', None):
                 print(f"  __cause__: {e.__cause__}")
             return False
+
+
+    ##  ##                                  ##  ##  -- -- Memory Control: Archival -- --  ##  ##
+
+    def archive_and_wipe_memory(self) -> Path:
+        """
+        Archive on-disk memory + current in-memory state into a timestamped txt file,
+        then wipe both. Returns the archive path.
+        """
+        ts = datetime.now().strftime("%Y_%m_%d_%H%M%S")
+        backup_dir = self.memory_path.parent / "MEMORY_BACKUP"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+
+        archive_name = f"DorisTutor_Archived_MemoryWipe_{ts}.txt"
+        archive_path = backup_dir / archive_name
+
+        disk_text = ""
+        if self.memory_path.exists():
+            try:
+                disk_text = self.memory_path.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                # If something weird happens, still proceed with in-memory archive.
+                disk_text = "[ERROR] Could not read memory file.\n"
+
+        # Best-effort human-readable dump of in-memory history
+        mem_lines: list[str] = []
+        for m in getattr(self, "history", []):
+            role = getattr(m, "type", None) or getattr(m, "role", None) or m.__class__.__name__
+            content = getattr(m, "content", None)
+            if content is None:
+                content = str(m)
+            mem_lines.append(f"{role}: {content}")
+
+        mem_text = "\n".join(mem_lines).strip()
+
+        archive_body = (
+            f"=== Doris Tutor Memory Wipe Archive ===\n"
+            f"Timestamp: {ts}\n"
+            f"Memory file: {self.memory_path}\n\n"
+            f"--- On-disk memory (raw) ---\n"
+            f"{disk_text}\n\n"
+            f"--- In-memory history (best effort) ---\n"
+            f"{mem_text}\n"
+        )
+
+        archive_path.write_text(archive_body, encoding="utf-8")
+
+        # Wipe disk + RAM
+        try:
+            # truncate (keeps file path stable)
+            self.memory_path.parent.mkdir(parents=True, exist_ok=True)
+            self.memory_path.write_text("", encoding="utf-8")
+        except Exception:
+            # If truncation fails, don’t crash the UI flow.
+            pass
+
+        if hasattr(self, "history"):
+            self.history.clear()
+
+        return archive_path
+
+
+    ##  ##                              ##  ##  -- -- Model Build -- --  ##  ##
 
     def __post_init__(self) -> None:
         print(
@@ -126,6 +190,8 @@ class ChatEngine:
         self.history.append(AIMessage(content = reply.content))
         append_turn(self.memory_path, "assistant", reply.content)
         return reply.content
+
+###  ###  ###                                                 ###  ###  ###  --  --  main()  --  --  ###  ###
 
 def main() -> None:
     user = input("Welcome, user, please enter a user-name: ").strip() or "Sir and/or Ma'am"
