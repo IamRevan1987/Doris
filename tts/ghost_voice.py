@@ -68,8 +68,11 @@ class GhostVoiceEngine:
         if not self.cfg.model_path.exists():
             raise RuntimeError(f"Piper model not found: {self.cfg.model_path}")
 
-        ts = time.strftime("%Y%m%d_%H%M%S")
-        wav_path = (self.cfg.output_dir / f"{filename_stem}_{ts}.wav").resolve()
+        # Use high-precision timestamp + random component to prevent collisions during rapid synthesis
+        ns = time.time_ns()
+        import uuid
+        uid = str(uuid.uuid4())[:8]
+        wav_path = (self.cfg.output_dir / f"{filename_stem}_{ns}_{uid}.wav").resolve()
 
         cmd = [
             self.cfg.piper_binary,

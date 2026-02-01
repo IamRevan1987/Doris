@@ -48,6 +48,9 @@ def sanitize_for_tts(text: str) -> str:
         r"\u4E00-\u9FFF]"  # CJK Unified Ideographs
     )
 
+    ##  ##                              ##  ## Clears Hashtags in vocalization
+    _HASHTAG_WORD_RE = re.compile(r"(?<!\w)#([A-Za-z0-9_]+)")
+
     if TTS.strip_markdown:
         # Convert markdown links to readable label
         t = _MD_LINK_RE.sub(r"\1", t)
@@ -76,6 +79,11 @@ def sanitize_for_tts(text: str) -> str:
 
     # Replace raw filesystem paths with a human phrase
     t = _PATH_RE.sub(" a file path", t)
+
+    # Hashtags: keep the word, drop the '#'
+    t = _HASHTAG_WORD_RE.sub(r"\1", t)
+    # Clean up any leftover standalone '#'
+    t = t.replace("#", " ")
 
 
     # Bullets -> "1) ..." style (helps speech cadence)

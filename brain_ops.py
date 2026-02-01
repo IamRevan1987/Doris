@@ -25,7 +25,7 @@ class ChatEngine:
     tts: GhostVoiceEngine = field(init = False)
     temperature: float = 0.15
     num_ctx: int = 12288
-    num_predict: int = 256
+    num_predict: int = 205
     timeout: int = 90
     keep_alive: str = "30m"
 

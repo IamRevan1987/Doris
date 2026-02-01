@@ -2,6 +2,7 @@ from core.core_drivers import apply_cpu_limits      ##  SAFETY MEASURE, DO NOT R
 apply_cpu_limits()                                  ##  SAFETY MEASURE, DO NOT REMOVE OR CHANGE THE POSITION OF THIS LINE  ##
 #############################################################################################################################
 import sys, time
+from datetime import datetime
 from pathlib import Path
 from brain_ops import ChatEngine
 from core.core_tts_rules import chunk_for_tts
@@ -114,28 +115,6 @@ class TTSWorker(QThread):
 
 
 
-class TTSWorker(QThread):
-    done = pyqtSignal(list)
-    err = pyqtSignal(str)
-
-
-    def __init__(self, engine: ChatEngine, text: str):
-        super().__init__()
-        self.engine = engine
-        self.text = text
-
-    def run(self) -> None:
-        try:
-            chunks = chunk_for_tts(self.text)
-            wavs: list[str] = []
-            for chunk in chunks:
-                wav = self.engine.synthesize_text_to_wav(chunk)
-                wavs.append(str(wav))
-            self.done.emit(wavs)
-        except Exception as e:
-            self.err.emit(str(e))
-
-
 
 # -----------------------------
 # UI helpers
@@ -190,6 +169,7 @@ def main() -> None:
     tts_row = _panel_frame()
     tr = QHBoxLayout(tts_row)
     chk_speak = QCheckBox("Speak replies")
+    chk_speak.setChecked(True)
     btn_speak_now = QPushButton("Speak last")
     btn_play = QPushButton("Play")
     btn_stop = QPushButton("Stop")
@@ -200,6 +180,7 @@ def main() -> None:
     btn_speak_now.setEnabled(False)
     btn_play.setEnabled(False)
     btn_stop.setEnabled(False)
+
 
     tr.addWidget(chk_speak)
     tr.addStretch(1)
@@ -561,9 +542,57 @@ def main() -> None:
         # Advance to next chunk if available
         if last_tts["idx"] < len(wavs) - 1:
             last_tts["idx"] += 1
-            QTimer.singleShot(50, _play_current_chunk)
+            # Small buffer to separate sentences, feels more natural
+            QTimer.singleShot(150, _play_current_chunk)
         else:
             status.showMessage("TTS finished")
+
+    def _trigger_greeting() -> None:
+        """
+        Warm-up greeting to welcome the user and prime the audio engine.
+        """
+        # 1. Determine time of day
+        hour = datetime.now().hour
+        if 5 <= hour < 12:
+            time_greeting = "Good morning"
+        elif 12 <= hour < 18:
+            time_greeting = "Good afternoon"
+        else:
+            time_greeting = "Good evening"
+
+        # 2. Determine day
+        day_name = datetime.now().strftime("%A")
+
+        # 3. Construct message
+        # "..." at the start acts as a silent warm-up buffer for Piper
+        greeting_text = f"... ... {time_greeting} {engine.user_name}, happy {day_name}. Systems online."
+
+        # 4. Synthesize and play (reusing the existing TTSWorker logic mechanism)
+        # We manually trigger it as if 'speak last' was requested, but with custom text.
+        worker = TTSWorker(engine, greeting_text)
+        active_threads.append(worker)
+
+        def _cleanup_greet():
+            if worker in active_threads:
+                active_threads.remove(worker)
+            worker.deleteLater()
+
+        def on_greet_done(wavs: list):
+            last_tts["wavs"] = [str(w) for w in (wavs or [])]
+            last_tts["idx"] = 0
+            btn_play.setEnabled(bool(last_tts["wavs"]))
+            btn_stop.setEnabled(bool(last_tts["wavs"]))
+            status.showMessage("Greeting ready")
+            # Auto-play the greeting
+            on_play()
+
+        def on_greet_err(msg: str):
+            print(f"[GREET ERROR] {msg}")
+
+        worker.done.connect(on_greet_done)
+        worker.err.connect(on_greet_err)
+        worker.finished.connect(_cleanup_greet)
+        worker.start()
 
     # ---------------- WIRING ----------------
     sfx.playingChanged.connect(_maybe_autonext)
@@ -579,6 +608,8 @@ def main() -> None:
     btn_next.clicked.connect(on_next)
 
     win.show()
+    # Trigger greeting shortly after show to ensure window is up
+    QTimer.singleShot(800, _trigger_greeting)
     QTimer.singleShot(0, update_portrait)
     sys.exit(app.exec())
 
