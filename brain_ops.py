@@ -2,46 +2,121 @@ from core.core_drivers import apply_cpu_limits      ##  SAFETY MEASURE, DO NOT R
 from core.core_lock import exclusive_execution
 apply_cpu_limits()                                  ##  SAFETY MEASURE, DO NOT REMOVE OR CHANGE THE POSITION OF THIS LINE  ##
 #############################################################################################################################
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
-from tts.tts_config import piper_bin_path, voice_model_path, tts_out_dir
-from tts.ghost_voice import GhostVoiceConfig, GhostVoiceEngine
-from core.core_memories import load_turns, append_turn
+"""
+Doris Tutor - Brain Operations
+Core logic for Chat Engine, Memory, and TTS integration.
+"""
+
+# ---- Imports ----
+
+# Standard Library
+import os
+import time
 from dataclasses import dataclass, field
-from langchain_ollama import ChatOllama
 from datetime import datetime
 from pathlib import Path
 from typing import List
-import httpx
-import os
 
+# Third-Party
+import httpx
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
+from langchain_ollama import ChatOllama
+
+# Local
+from core.core_memories import load_turns, append_turn
+from tts.tts_config import piper_bin_path, voice_model_path, tts_out_dir
+from tts.ghost_voice import GhostVoiceConfig, GhostVoiceEngine
+
+
+# ---- Chat Engine ----
 
 @dataclass
 class ChatEngine:
+    """
+    Main controller for LLM interaction, Memory management, and TTS synthesis.
+    """
+    # Config
     user_name: str = "David"
-    model_name: str =  "llama3.2:1b"  ## In case you want to switch: "ministral-3:3b"
+    model_name: str = "llama3.2:1b"
     base_url: str = "http://127.0.0.1:11434"
     memory_path: Path = Path("data/chat.jsonl")
-    tts_enabled: bool = True           # This will turn off all TTS
-    tts: GhostVoiceEngine = field(init = False)
+    tts_enabled: bool = True
     temperature: float = 0.15
     num_ctx: int = 12288
     num_predict: int = 205
     timeout: int = 90
     keep_alive: str = "30m"
 
+    # Internal State (init=False)
+    tts: GhostVoiceEngine = field(init=False)
     llm: ChatOllama = field(init=False)
-    history: List[BaseMessage] = field(default_factory = list, init = False)
+    history: List[BaseMessage] = field(default_factory=list, init=False)
     last_tts_wavs: list[str] = field(default_factory=list, init=False)
     last_tts_idx: int = field(default=0, init=False)
 
+    def __post_init__(self) -> None:
+        """Initialize LLM, TTS backend, and load memory."""
+        print(
+            f"[ENGINE] file={__file__} cwd={os.getcwd()} model={self.model_name} "
+            f"base_url={self.base_url} keep_alive={self.keep_alive} "
+            f"num_ctx={self.num_ctx} num_predict={self.num_predict}"
+        )
+
+        # 1. Setup LLM
+        self.llm = ChatOllama(
+            model=self.model_name,
+            base_url=self.base_url,
+            temperature=self.temperature,
+            num_ctx=self.num_ctx,
+            num_predict=self.num_predict,
+            keep_alive=self.keep_alive,
+            timeout=self.timeout,
+        )
+
+        # 2. Setup TTS
+        cfg = GhostVoiceConfig(
+            enabled=self.tts_enabled,
+            piper_binary=piper_bin_path(),
+            model_path=voice_model_path(),
+            output_dir=tts_out_dir(),
+        )
+        self.tts = GhostVoiceEngine(cfg)
+        self.last_tts_wavs.clear()
+        self.last_tts_idx = 0
+
+        # 3. Setup Memory / History
+        system_msg = SystemMessage(
+            content=(
+                "You are Doris, a life-long teacher, here to help tutor and educate the user. "
+                f"The user's name is {self.user_name}"
+            )
+        )
+
+        self.history = [system_msg]
+
+        if not self.memory_path.exists():
+            append_turn(self.memory_path, "system", system_msg.content)
+
+        for t in load_turns(self.memory_path, limit=200):
+            role = t.get("role")
+            content = (t.get("content") or "").strip()
+            if not content:
+                continue
+            if role == "user":
+                self.history.append(HumanMessage(content=content))
+            elif role == "assistant":
+                self.history.append(AIMessage(content=content))
+
+    # ---- Diagnostics ----
+
     def backend_ok(self) -> bool:
+        """Check if Ollama backend is reachable."""
         url = f"{self.base_url}/api/tags"
         try:
             r = httpx.get(url, timeout=2.0)
             print(f"[BACKEND_OK] url={url} status={r.status_code}")
             return r.status_code == 200
         except Exception as e:
-            # repr(e) gives a cleaner string for some connection errors
             print(f"[BACKEND_ERR] url={url} EXC={type(e).__name__}: {repr(e)}")
             if getattr(e, '__context__', None):
                 print(f"  __context__: {e.__context__}")
@@ -49,8 +124,7 @@ class ChatEngine:
                 print(f"  __cause__: {e.__cause__}")
             return False
 
-
-    ##  ##                                  ##  ##  -- -- Memory Control: Archival -- --  ##  ##
+    # ---- Memory Operations ----
 
     def archive_and_wipe_memory(self) -> Path:
         """
@@ -69,7 +143,6 @@ class ChatEngine:
             try:
                 disk_text = self.memory_path.read_text(encoding="utf-8", errors="replace")
             except Exception:
-                # If something weird happens, still proceed with in-memory archive.
                 disk_text = "[ERROR] Could not read memory file.\n"
 
         # Best-effort human-readable dump of in-memory history
@@ -97,69 +170,17 @@ class ChatEngine:
 
         # Wipe disk + RAM
         try:
-            # truncate (keeps file path stable)
             self.memory_path.parent.mkdir(parents=True, exist_ok=True)
             self.memory_path.write_text("", encoding="utf-8")
         except Exception:
-            # If truncation fails, don’t crash the UI flow.
             pass
 
         if hasattr(self, "history"):
             self.history.clear()
 
         return archive_path
-
-
-    ##  ##                              ##  ##  -- -- Model Build -- --  ##  ##
-
-    def __post_init__(self) -> None:
-        print(
-            f"[ENGINE] file={__file__} cwd={os.getcwd()} model={self.model_name} "
-            f"base_url={self.base_url} keep_alive={self.keep_alive} "
-            f"num_ctx={self.num_ctx} num_predict={self.num_predict}"
-        )
-
-        self.llm = ChatOllama(
-            model = self.model_name,
-            base_url = self.base_url,
-            temperature = self.temperature,
-            num_ctx = self.num_ctx,
-            num_predict = self.num_predict,
-            keep_alive = self.keep_alive,
-            timeout = self.timeout,
-        )
-        cfg = GhostVoiceConfig(
-            enabled = self.tts_enabled,
-            piper_binary = piper_bin_path(),
-            model_path = voice_model_path(),
-            output_dir = tts_out_dir(),
-        )
-        self.tts = GhostVoiceEngine(cfg)
-        self.last_tts_wavs.clear()
-        self.last_tts_idx = 0
-
-        system_msg = SystemMessage(
-            content=(
-                "You are Doris, a life-long teacher, here to help tutor and educate the user. "
-                f"The user's name is {self.user_name}"
-            )
-        )
-
-
-        self.history = [system_msg]
-
-        if not self.memory_path.exists():
-            append_turn(self.memory_path, "system", system_msg.content)
-
-        for t in load_turns(self.memory_path, limit=200):
-            role = t.get("role")
-            content = (t.get("content") or "").strip()
-            if not content:
-                continue
-            if role == "user":
-                self.history.append(HumanMessage(content=content))
-            elif role == "assistant":
-                self.history.append(AIMessage(content=content))
+    
+    # ---- TTS Operations ----
 
     def get_last_tts_wavs(self) -> list[str]:
         return list(self.last_tts_wavs)
@@ -173,51 +194,53 @@ class ChatEngine:
         High-level TTS entry point used by UI.
         Returns a filesystem path to a WAV file.
         """
-        # Ensure cache exists (belt + suspenders)
         if not hasattr(self, "last_tts_wavs"):
             self.last_tts_wavs = []
             self.last_tts_idx = 0
 
-        # GhostVoiceEngine should already write a WAV to its configured output_dir
         wav_path = self.tts.synthesize(text)
-
         self.last_tts_wavs.append(str(wav_path))
         return wav_path
 
+    # ---- Core Logic ----
+
     def send(self, text: str) -> str:
+        """
+        Send user message to LLM and return text response.
+        Updates history and persists turn.
+        """
         text = text.strip()
         if not text:
             return ""
 
-        self.history.append(HumanMessage(content = text))
+        self.history.append(HumanMessage(content=text))
         append_turn(self.memory_path, "user", text)
 
         print(f"[SEND] attempting generation. base_url={self.base_url!r}")
 
         # Retry logic: Try twice.
         max_retries = 1
+        reply = None # scope init
+        
         for attempt in range(max_retries + 1):
             try:
                 with exclusive_execution("llm"):
-                    reply = self.llm.invoke(self.history)    ##  ##  LLM Execution - Initial call to the AI
+                    reply = self.llm.invoke(self.history)
                 break
             except Exception as e:
                 print(f"[SEND_ERR] attempt={attempt+1} error={e}")
                 if attempt < max_retries:
-                    import time
                     time.sleep(0.5)
                     continue
-                # If we're out of retries, re-raise the last exception
                 raise
 
         content = reply.content
 
-        # LangChain sometimes returns message content as a list of parts
+        # Handle LangChain content list
         if isinstance(content, list):
             parts: list[str] = []
             for item in content:
                 if isinstance(item, dict):
-                    # common shape: {"type": "text", "text": "..."}
                     parts.append(str(item.get("text", "")))
                 else:
                     parts.append(str(item))
@@ -230,12 +253,11 @@ class ChatEngine:
         return content
 
 
-###  ###  ###                                                 ###  ###  ###  --  --  main()  --  --  ###  ###
+# ---- CLI Helper ----
 
 def main() -> None:
     user = input("Welcome, user, please enter a user-name: ").strip() or "Sir and/or Ma'am"
-    engine = ChatEngine(user_name = user)
-    worker_ref = {"worker": None}
+    engine = ChatEngine(user_name=user)
 
     print("\nType your message. Type /quit to exit.\n")
     while True:
@@ -248,5 +270,11 @@ def main() -> None:
         out = engine.send(text)
         print(f"Doris >> {out}\n")
 
+
 if __name__ == "__main__":
     main()
+
+# ---- Invariants Check ----
+# SAFETY: CPU limits applied at top.
+# ENGINE: ChatEngine parameters matching.
+# IO: JSONL paths preserved.
