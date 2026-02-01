@@ -18,7 +18,7 @@ import os
 @dataclass
 class ChatEngine:
     user_name: str = "David"
-    model_name: str = "ministral-3:3b"
+    model_name: str =  "llama3.2:1b"  ## In case you want to switch: "ministral-3:3b"
     base_url: str = "http://127.0.0.1:11434"
     memory_path: Path = Path("data/chat.jsonl")
     tts_enabled: bool = True           # This will turn off all TTS

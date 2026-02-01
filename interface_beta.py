@@ -476,7 +476,12 @@ def main() -> None:
         if not text:
             return
 
-        worker = TTSWorker(engine, text)
+        tts_text = text
+        if not tts_text.lstrip().startswith("..."):
+            tts_text = f"... ... ... .{tts_text}"
+
+        worker = TTSWorker(engine, tts_text)
+
         active_threads.append(worker)
 
         def _cleanup() -> None:
@@ -563,9 +568,17 @@ def main() -> None:
         # 2. Determine day
         day_name = datetime.now().strftime("%A")
 
+        # 2b. Weather (placeholder for now)
+        # Later: replace these with real values from your offline weather file / API.
+        temp_str = None   # e.g., "62 degrees"
+        cond_str = None   # e.g., "cloudy"
+
         # 3. Construct message
-        # "..." at the start acts as a silent warm-up buffer for Piper
-        greeting_text = f"... ... {time_greeting} {engine.user_name}, happy {day_name}. Systems online."
+        base = f"... ... ... {time_greeting} {engine.user_name}, happy {day_name}."
+        if temp_str and cond_str:
+            greeting_text = f"{base} The weather looks like it will be {temp_str} and {cond_str}. How may I be of service?"
+        else:
+            greeting_text = f"{base} I hope you are having a nice day. How may I be of service?"
 
         # 4. Synthesize and play (reusing the existing TTSWorker logic mechanism)
         # We manually trigger it as if 'speak last' was requested, but with custom text.
