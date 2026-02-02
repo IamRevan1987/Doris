@@ -55,10 +55,12 @@ def sanitize_for_tts(text: str) -> str:
         # Convert markdown links to readable label
         t = _MD_LINK_RE.sub(r"\1", t)
         # Strip markdown emphasis so TTS doesn't read '*' literally
+        # Handle bold (**text**)
         t = _MD_BOLD_RE.sub(r"\1", t)
+        # Handle italic (*text*)
         t = _MD_ITALIC_RE.sub(r"\1", t)
+        # Handle underscore (_text_)
         t = _MD_UNDERSCORE_RE.sub(r"\1", t)
-
 
     if TTS.strip_code_blocks:
         t = _CODE_FENCE_RE.sub(" ", t)
@@ -82,9 +84,8 @@ def sanitize_for_tts(text: str) -> str:
 
     # Hashtags: keep the word, drop the '#'
     t = _HASHTAG_WORD_RE.sub(r"\1", t)
-    # Clean up any leftover standalone '#'
+    # Clean up any leftover standalone '#' -- but ensure we don't merge words if spaces are missing
     t = t.replace("#", " ")
-
 
     # Bullets -> "1) ..." style (helps speech cadence)
     if TTS.speak_lists_as_sentences:
@@ -118,17 +119,28 @@ def sanitize_for_tts(text: str) -> str:
 
 def chunk_for_tts(text: str) -> List[str]:
     """
-    Sentence-ish chunking with size bounds.
-    Returns a list of chunks in order.
+    Sentence-ish chunking aimed at low-latency playback.
+    Splits on punctuation more aggressively to feed the streamer.
     """
     t = sanitize_for_tts(text)
     if not t:
         return []
 
-    # Split on sentence endings but keep it simple and robust
-    parts = re.split(r"(?<=[\.!\?])\s+", t)
+    # 1. Split on strong punctuation (. ! ?)
+    # 2. Also consider commas or semicolons if chunks get too long (optional optimization)
+    # The regex splits AFTER the punctuation, keeping it in the previous chunk if possible,
+    # or we handle the split list carefully.
+    
+    # This regex splits *after* a sentence terminator (., !, ?) followed by whitespace or end of string.
+    parts = re.split(r"(?<=[.!?])\s+", t)
+    
     chunks: List[str] = []
     buf = ""
+    
+    # Target chunk size for "live" feel. 
+    # Too small = robotic/choppy. Too large = latency.
+    # ~50-80 chars is often a good balance for Piper.
+    SOFT_LIMIT = 80 
 
     for p in parts:
         p = p.strip()
@@ -139,17 +151,19 @@ def chunk_for_tts(text: str) -> List[str]:
             buf = p
             continue
 
-        # Try to append to current chunk if it stays under max
-        if len(buf) + 1 + len(p) <= TTS.max_chars_per_chunk:
-            buf = f"{buf} {p}"
+        # If adding this part exceeds max, flush existing buffer
+        if len(buf) + 1 + len(p) > TTS.max_chars_per_chunk:
+            chunks.append(buf)
+            buf = p
+        
+        # If the current buffer is already "long enough" (soft limit) and this is a new sentence, flush it
+        elif len(buf) > SOFT_LIMIT:
+             chunks.append(buf)
+             buf = p
+             
         else:
-            # Flush current chunk
-            if len(buf) >= TTS.min_chars_per_chunk or not chunks:
-                chunks.append(buf)
-                buf = p
-            else:
-                # If buf is too tiny, merge anyway
-                buf = f"{buf} {p}"
+            # Merge
+            buf = f"{buf} {p}"
 
     if buf:
         chunks.append(buf)

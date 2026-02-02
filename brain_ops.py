@@ -85,12 +85,18 @@ class ChatEngine:
         self.last_tts_idx = 0
 
         # 3. Setup Memory / History
-        system_msg = SystemMessage(
-            content=(
+        persona_path = Path(__file__).parent / "core" / "core_persona.md"
+        if persona_path.exists():
+            persona_text = persona_path.read_text(encoding="utf-8").strip()
+            # Append user context
+            persona_text += f"\n\nUser Context:\nThe user's name is {self.user_name}"
+        else:
+            persona_text = (
                 "You are Doris, a life-long teacher, here to help tutor and educate the user. "
                 f"The user's name is {self.user_name}"
             )
-        )
+
+        system_msg = SystemMessage(content=persona_text)
 
         self.history = [system_msg]
 
