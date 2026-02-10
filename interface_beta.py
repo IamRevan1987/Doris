@@ -90,7 +90,8 @@ def _panel_frame() -> QFrame:
 class Worker(QThread):
     """
     CHAT worker only.
-    Emits a single string reply.
+    Handles the asynchronous communication with the ChatEngine to prevent UI freezing.
+    Emits a single string reply when the LLM/RAG generation is complete.
     """
     done = pyqtSignal(str)
     err = pyqtSignal(str)
@@ -102,6 +103,7 @@ class Worker(QThread):
 
     def run(self) -> None:
         try:
+            # Blocking call to engine.send() happens here, off the main thread.
             reply = self.engine.send(self.text)
             self.done.emit(str(reply))  # ALWAYS str
         except Exception as e:
@@ -111,7 +113,8 @@ class Worker(QThread):
 class TTSStreamWorker(QThread):
     """
     TTS worker for STREAMING.
-    Emits raw PCM bytes in chunks to be played immediately.
+    Generates audio in chunks to allow for low-latency playback.
+    Emits raw PCM bytes in chunks to be played immediately by the QAudioSink.
     """
     chunk_ready = pyqtSignal(bytes)
     finished_ok = pyqtSignal()
@@ -125,16 +128,13 @@ class TTSStreamWorker(QThread):
         self._is_stopped = False
 
     def stop(self):
+        # Signal the loop to break early
         self._is_stopped = True
 
     def run(self) -> None:
         try:
             # Pre-chunk text so we can start generating immediately
-            # The engine.tts.stream_synthesis handles the subprocess
-            # We iterate over text chunks here to allow finer interruption?
-            # Actually, passing full text to piper is fine, but splitting helps latency
-            # if we wanted to pipeline generation of chunk 2 while playing chunk 1.
-            # For simplicity, we feed sentence chunks to the generator one by one.
+            # Strategies for chunking ensure natural pauses and faster start-to-speech time.
             
             text_chunks = chunk_for_tts(self.text)
             if not text_chunks:
@@ -145,13 +145,14 @@ class TTSStreamWorker(QThread):
                 if self._is_stopped:
                     break
                 
-                # Streaming generator loop
+                # Streaming generator loop: yield PCM audio as it is synthesized
                 for pcm_chunk in self.engine.tts.stream_synthesis(content, self.speed):
                     if self._is_stopped:
                         break
                     self.chunk_ready.emit(pcm_chunk)
             
             self.finished_ok.emit()
+
 
         except Exception as e:
             self.err.emit(str(e))
@@ -175,12 +176,14 @@ class DorisWindow(QMainWindow):
     """
     Main application window for Doris Tutor.
     Encapsulates UI construction, event handling, and engine logic.
+    Acts as the bridge between the Qt front-end and the ChatEngine back-end.
     """
     def __init__(self, app: QApplication):
         super().__init__()
         self.app = app
 
         # # ENGINE #
+        # Initialize the core logic controller
         self.engine = ChatEngine(user_name="Dave")
 
         # # THREADS #
@@ -194,22 +197,25 @@ class DorisWindow(QMainWindow):
         self.current_worker = None # Track TTS worker specifically for cancellation
 
         # # SETTINGS (Persistence) #
+        # Save/Load user preferences (volume, speed, theme)
         self.settings = QSettings("Doris", "Tutor")
         
         # # AUDIO SINK (Streaming) #
+        # Low-level audio handling for TTS playback
         self.audio_sink = None
         self.audio_io = None
         self.audio_buffer = bytearray() # App-level buffer for overflow
         self._init_audio_output()
 
         # # INIT UI #
-        self.setWindowTitle("🧑‍🏫 Doris — Tutor Console (Beta)")
+        self.setWindowTitle("🧑‍🏫 Doris v0.2.2 — Tutor Console (Beta)")
         self.resize(1100, 650)
         self._build_ui()
         self._setup_menu()
         self._load_portrait()
         
         # # SHUTDOWN HOOK #
+        # Ensure clean exit by stopping threads and audio
         self.app.aboutToQuit.connect(self._shutdown_threads)
 
     def _init_audio_output(self):
@@ -744,10 +750,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-# ---- Invariants Check ----
-# SAFETY: CPU limits applied at top of file (preserved implicitly by replacement range, checking...).
-# Wait, user instructions said "match existing code".
-# LIMITATION: My replacement text started AFTER the safety harness?
-# The tool replaces lines 12-652. Lines 1-11 were preserved?
-# Accessing file to check...
