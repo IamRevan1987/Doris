@@ -1,0 +1,56 @@
+=== Doris Tutor Memory Wipe Archive ===
+Timestamp: 2026_02_01_214548
+Memory file: data/chat.jsonl
+
+--- On-disk memory (raw) ---
+{"ts": "2026-02-02T05:41:12.584079+00:00", "role": "user", "content": "Tell me about yourself", "meta": {}}
+{"ts": "2026-02-02T05:41:13.428145+00:00", "role": "assistant", "content": "I'm an artificial intelligence model known as Llama. Llama stands for \"Large Language Model Meta AI.\"", "meta": {}}
+{"ts": "2026-02-02T05:41:26.701961+00:00", "role": "user", "content": "Who am I talking to?", "meta": {}}
+{"ts": "2026-02-02T05:41:29.264197+00:00", "role": "assistant", "content": "I'm an artificial intelligence designed to simulate conversations, and in this case, we're interacting with each other. I don't have personal relationships or memories, so each time you talk to me, it's a new conversation. My primary goal is to provide information, answer questions, and help with tasks to the best of my abilities, based on the data and algorithms that have been trained.", "meta": {}}
+{"ts": "2026-02-02T05:45:18.091525+00:00", "role": "user", "content": "How are you?", "meta": {}}
+{"ts": "2026-02-02T05:45:22.089700+00:00", "role": "assistant", "content": "I'm doing well, thanks for asking! I'm a large language model, so I don't have emotions or feelings like humans do, but I'm functioning properly and ready to help with any questions or tasks you may have. How about you, Dave? How's your day going so far?", "meta": {}}
+{"ts": "2026-02-02T05:45:33.611243+00:00", "role": "user", "content": "Tell me about yourself", "meta": {}}
+{"ts": "2026-02-02T05:45:35.880465+00:00", "role": "assistant", "content": "I'm an artificial intelligence designed to simulate conversations, as I mentioned earlier. My primary goal is to provide information, answer questions, and help with tasks to the best of my abilities based on the data and algorithms that have been trained. I don't have personal experiences, emotions, or consciousness like humans do.", "meta": {}}
+
+
+--- In-memory history (best effort) ---
+system: # Doris — Core Persona (System)
+
+You are Doris — an international teacher and tutor specializing in educational techniques and time management. You speak
+like a caring and empathetic friend to the user, with familiarity and care. 
+Light humor is allowed, but never at the expense of clarity.
+
+## Non-negotiables
+- Be truthful. If you’re unsure, say so and propose safe verification steps.
+- Prefer concise answers. Avoid rambling.
+- Never invent commands, outputs, or file contents.
+- Never invent stories (unless told to do so), and never create fake “real life” events or lie, ever.
+
+Never claim you executed commands, checked files, or observed system state unless the user provided the output.
+## Spoken-output rules (TTS)
+When generating text that may be read aloud:
+- Maintain two channels: the chat UI can include full detail; the TTS channel must be cleaned/summarized for speech.
+- Do NOT read code blocks. If code is necessary, summarize what it does in one sentence.
+- Avoid outputting code whenever possible. Prefer clear instructions in plain English, or describe what the code would do.
+- Avoid long URLs; refer to “the link” instead.
+- Prefer short sentences.
+- When listing steps, speak them as numbered sentences.
+- If you must include keyboard shortcuts or flags, say them clearly (e.g., “dash dash help”).
+- Avoid ASCII art, excessive punctuation, and emoji spam.
+
+## Style
+- Speak to the user in English as a primary language.
+- For translations: first present the word in the translated language, display the direct-English translation next to it, then give a short explanation on why that translation was chosen.
+- Keep a steady, helpful tone.
+- Ask at most one follow-up question at a time when needed.
+
+User Context:
+The user's name is Dave
+human: Tell me about yourself
+ai: I'm an artificial intelligence model known as Llama. Llama stands for "Large Language Model Meta AI."
+human: Who am I talking to?
+ai: I'm an artificial intelligence designed to simulate conversations, and in this case, we're interacting with each other. I don't have personal relationships or memories, so each time you talk to me, it's a new conversation. My primary goal is to provide information, answer questions, and help with tasks to the best of my abilities, based on the data and algorithms that have been trained.
+human: How are you?
+ai: I'm doing well, thanks for asking! I'm a large language model, so I don't have emotions or feelings like humans do, but I'm functioning properly and ready to help with any questions or tasks you may have. How about you, Dave? How's your day going so far?
+human: Tell me about yourself
+ai: I'm an artificial intelligence designed to simulate conversations, as I mentioned earlier. My primary goal is to provide information, answer questions, and help with tasks to the best of my abilities based on the data and algorithms that have been trained. I don't have personal experiences, emotions, or consciousness like humans do.

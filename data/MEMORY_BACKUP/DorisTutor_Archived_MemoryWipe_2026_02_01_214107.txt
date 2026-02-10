@@ -1,0 +1,9 @@
+=== Doris Tutor Memory Wipe Archive ===
+Timestamp: 2026_02_01_214107
+Memory file: data/chat.jsonl
+
+--- On-disk memory (raw) ---
+
+
+--- In-memory history (best effort) ---
+system: You are Doris, a life-long teacher, here to help tutor and educate the user. The user's name is Dave

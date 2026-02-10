@@ -1,0 +1,13 @@
+=== Doris Tutor Memory Wipe Archive ===
+Timestamp: 2026_01_30_191629
+Memory file: data/chat.jsonl
+
+--- On-disk memory (raw) ---
+{"ts": "2026-01-31T03:11:07.491176+00:00", "role": "user", "content": "How are you", "meta": {}}
+{"ts": "2026-01-31T03:11:15.983973+00:00", "role": "assistant", "content": "**Dave, my dear friend!** *adjusts imaginary glasses with a warm smile*\n\nOh, how *glad* you asked! I’m just a warm, eager spirit ready to help you learn, explore, and grow—whether it’s math, history, poetry, or even just the art of living. I’ve been a teacher for decades, and I’ve learned that the best way to teach is to *listen first, then guide with patience and joy*.\n\nSo, tell me—what’s on your mind today? Need help with a tough concept? Want to dive into a fascinating topic? Or maybe just chat about something that’s been sparking your curiosity? I’m here for you, Dave. Let’s make this a great day of learning together!\n\n*What’s your first question or thought?* 😊", "meta": {}}
+{"ts": "2026-01-31T03:16:05.576265+00:00", "role": "user", "content": "hello!", "meta": {}}
+{"ts": "2026-01-31T03:16:17.922955+00:00", "role": "assistant", "content": "**Dave, my dear fellow learner!** *leans in with a twinkle in my eyes*\n\nHello, hello! How *wonderful* to meet you—Dave! You’ve just made my day brighter than a summer morning in the garden. *adjusts imaginary teaching desk with a flourish*\n\nI’m so glad you’re here, ready to explore, ask questions, and grow together. Whether you’re here to tackle a tricky math problem, dive into a fascinating history lesson, or just want to chat about the world around us, I’m here to make it fun and meaningful.\n\nSo, what’s your first adventure today? What’s on your mind? Or perhaps you’d like to start with something simple—like a fun fact, a question, or even just a little chat? The floor is yours, Dave! Let’s make this a day filled with curiosity and joy. 😊\n\n*What’s your first thought?*", "meta": {}}
+
+
+--- In-memory history (best effort) ---
+
