@@ -34,7 +34,6 @@ from tts.ghost_voice import GhostVoiceConfig, GhostVoiceEngine
 
 ##  ##                                                      ##  ##  RAG Trigger Rules  ##  ##
 # High-density technical tokens to force RAG lookup
-# These lists define which keywords trigger the "Ancient Holocron" lookup.
 RAG_TRIGGER_RULES = {
     "LEGACY": [
         "holocron", "documents", "my notes", "search", "it notes", "jedi", "python", "code", "rag"
@@ -64,7 +63,6 @@ def should_trigger_rag(text: str) -> bool:
     """
     Determines if the input text should trigger a RAG lookup based on
     technical keywords, case sensitivity rules, and word boundaries.
-    Affects: Whether the system queries the local vector DB or uses pure LLM.
     """
     
     # 1. LEGACY: Case-insensitive, word boundary check
@@ -103,25 +101,16 @@ def should_trigger_rag(text: str) -> bool:
 
 ##  ##                                                      ##  ##  Holocron API Client  ##  ##
 def ask_the_holocron(question: str) -> str:
-    """
-    Queries the local Ancient_Holocron API.
-    This routes the user's question to the separate RAG service running on port 8000.
-    """
-    # Informative log for tracking RAG requests
-    print(f"[*] Accessing Holocron for: {question}")
+    """Queries the local Ancient_Holocron API."""
     try:
-        with httpx.Client(timeout=30.0) as client:
-            # Post the question to the RAG endpoint
+        with httpx.Client(timeout=180.0) as client:
             response = client.post(
                 "http://localhost:8000/query",
                 json={"question": question}
             )
             response.raise_for_status()
-            
-            # Extract answer from JSON response
             return response.json().get("answer", "The Holocron is silent.")
     except Exception as e:
-        # Return error as string so it's spoken/shown to user
         return f"[Holocron Error] {e}"
 
 
@@ -130,7 +119,6 @@ def ask_the_holocron(question: str) -> str:
 class ChatEngine:
     """
     Main controller for LLM interaction, Memory management, and TTS synthesis.
-    Manages the conversation history (context) and interfaces with Ollama and GhostVoice.
     """
     # Config
     user_name: str = "David"
@@ -161,7 +149,6 @@ class ChatEngine:
         )
 
         # 1. Setup LLM
-        # Connects to the local Ollama instance
         self.llm = ChatOllama(
             model=self.model_name,
             base_url=self.base_url,
@@ -173,7 +160,6 @@ class ChatEngine:
         )
 
         # 2. Setup TTS
-        # Configures the Piper TTS engine using paths from tts_config.py
         cfg = GhostVoiceConfig(
             enabled=self.tts_enabled,
             piper_binary=piper_bin_path(),
@@ -185,7 +171,6 @@ class ChatEngine:
         self.last_tts_idx = 0
 
         # 3. Setup Memory / History
-        # Loads the persona and previous conversation turns
         persona_path = Path(__file__).parent / "core" / "core_persona.md"
         if persona_path.exists():
             persona_text = persona_path.read_text(encoding="utf-8").strip()
@@ -198,11 +183,9 @@ class ChatEngine:
         system_msg = SystemMessage(content=persona_text)
         self.history = [system_msg]
 
-        # Initialize memory file if it doesn't exist
         if not self.memory_path.exists():
             append_turn(self.memory_path, "system", system_msg.content)
 
-        # Rehydrate history from disk
         for t in load_turns(self.memory_path, limit=200):
             role = t.get("role")
             content = (t.get("content") or "").strip()
@@ -222,10 +205,6 @@ class ChatEngine:
             return False
 
     def send(self, text: str) -> str:
-        """
-        Process a user message and generate a reply.
-        Routes to RAG if triggers are matched, otherwise uses standard LLM.
-        """
         text = text.strip()
         if not text:
             return ""
@@ -233,16 +212,16 @@ class ChatEngine:
         self.history.append(HumanMessage(content=text))
         append_turn(self.memory_path, "user", text)
 
-        # Informative check: Decides if we need external knowledge
+        # Informative but short: Check if we should route to RAG based on keywords.
         if should_trigger_rag(text):
-            # RAG Path: Query Holocron
+            print(f"[*] Accessing Holocron for: {text}")
             rag_response = ask_the_holocron(text)
             self.history.append(AIMessage(content=rag_response))
             append_turn(self.memory_path, "assistant", rag_response)
             return rag_response
 
         # Fallback to LLM
-        # Informative log: Showing we are falling back to general generation
+        # Informative but short: If no RAG trigger, use the standard LLM generation.
         print(f"[SEND] attempting generation. base_url={self.base_url!r}")
         max_retries = 1
         reply = None
@@ -263,27 +242,6 @@ class ChatEngine:
         self.history.append(AIMessage(content=content))
         append_turn(self.memory_path, "assistant", content)
         return content
-
-    def clear_active_memory(self) -> None:
-        """
-        Clears the in-memory history and wipes the chat.jsonl file.
-        Resets to just the SystemMessage.
-        """
-        # 1. Reset in-memory
-        if self.history:
-             # Keep the system prompt (first item)
-            self.history = [self.history[0]]
-        
-        # 2. Wipe disk file
-        if self.memory_path.exists():
-            # Truncate
-            with open(self.memory_path, "w", encoding="utf-8") as f:
-                pass
-            # Re-write system prompt
-            if self.history:
-                msg = self.history[0]
-                if isinstance(msg, SystemMessage):
-                    append_turn(self.memory_path, "system", msg.content)
 
 
 ##  ##                                                      ##  ##  CLI Entry Point  ##  ##
