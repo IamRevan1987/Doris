@@ -223,6 +223,8 @@ class PersistentPiper:
             # use read1() to get whatever is available without waiting for full 4096 bytes
             # this is significantly better for a persistent stream
             try:
+                if not self.process:
+                    break
                 chunk = self.process.stdout.read1(4096)
                 if not chunk:
                     break
@@ -233,6 +235,10 @@ class PersistentPiper:
                     # Give Piper a tiny bit of time to produce more if it's slow
                     # but don't block forever.
                     break
+            except (AttributeError, ValueError, OSError) as e:
+                # This happens if self.process is None or closed while reading
+                print(f"[PIPER DEBUG] Stream interrupted: {e}")
+                break
             except Exception as e:
                 print(f"[PIPER DEBUG] Read error: {e}")
                 break

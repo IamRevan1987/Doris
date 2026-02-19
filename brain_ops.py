@@ -140,7 +140,7 @@ class ChatEngine:
     tts_enabled: bool = True
     temperature: float = 0.15
     num_ctx: int = 12288
-    num_predict: int = 205
+    num_predict: int = 1024
     timeout: int = 90
     keep_alive: str = "30m"
 

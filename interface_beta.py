@@ -189,11 +189,16 @@ class SentenceWorker(QThread):
         self._is_stopped = True
 
     def run(self):
-        if self.tts._persistent_piper:
-            for chunk in self.tts._persistent_piper.speak(self.text):
-                if self._is_stopped:
-                    break
-                self.chunk_ready.emit(chunk)
+        try:
+            # Capture reference to avoid NoneType mid-loop if sliders are moved
+            piper = self.tts._persistent_piper
+            if piper:
+                for chunk in piper.speak(self.text):
+                    if self._is_stopped:
+                        break
+                    self.chunk_ready.emit(chunk)
+        except Exception as e:
+            print(f"[SentenceWorker DEBUG] run error: {e}")
 
 
 ##  ##                                                      ##  ##  Main Window Class  ##  ##
@@ -204,6 +209,8 @@ class DorisWindow(QMainWindow):
     Encapsulates UI construction, event handling, and engine logic.
     Acts as the bridge between the Qt front-end and the ChatEngine back-end.
     """
+    SPEED_OPTIONS = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5]
+
     def __init__(self, app: QApplication):
         super().__init__()
         self.app = app
@@ -240,7 +247,7 @@ class DorisWindow(QMainWindow):
         self._init_audio_output()
 
         # # INIT UI #
-        self.setWindowTitle("🧑‍🏫 Doris v0.2.2 — Tutor Console (Beta)")
+        self.setWindowTitle("🧑‍🏫 Doris v0.3.0 — Tutor Console (Beta)")
         self.resize(1100, 650)
         self._build_ui()
         self._setup_menu()
@@ -397,13 +404,18 @@ class DorisWindow(QMainWindow):
         # Speed Row
         speed_row = QHBoxLayout()
         saved_speed = self.settings.value("speed", 1.0, type=float)
-        # Slider range: 50% to 200% -> int 50 to 200
-        speed_int = int(saved_speed * 100)
+        
+        # Find nearest index for snapping speed
+        try:
+            speed_idx = min(range(len(self.SPEED_OPTIONS)), key=lambda i: abs(self.SPEED_OPTIONS[i] - saved_speed))
+        except:
+            speed_idx = 3 # fallback to 1.0x
+
         self.speed_slider = QSlider(Qt.Orientation.Horizontal)
-        self.speed_slider.setRange(50, 200)
-        self.speed_slider.setValue(speed_int)
-        self.speed_slider.setFixedWidth(80)
-        self.speed_slider.setToolTip(f"Speed: {saved_speed}x")
+        self.speed_slider.setRange(0, len(self.SPEED_OPTIONS) - 1)
+        self.speed_slider.setValue(speed_idx)
+        self.speed_slider.setFixedWidth(100) # Slightly wider for better control
+        self.speed_slider.setToolTip(f"Speed: {self.SPEED_OPTIONS[speed_idx]}x")
         
         speed_label = QLabel("⚡") # lightning/speed icon
         speed_row.addWidget(speed_label)
@@ -510,15 +522,40 @@ class DorisWindow(QMainWindow):
         apply_theme(self.app, checked)
     
     def on_volume_changed(self, value: int):
-        vol = value / 100.0
-        self.audio_sink.setVolume(vol)
-        self.settings.setValue("volume", vol)
-        self.vol_slider.setToolTip(f"Volume: {value}%")
+        """Volume control normalized 0.0 to 1.0."""
+        try:
+            # Clamp and normalize
+            clamped = max(0, min(100, value))
+            vol = clamped / 100.0
+            
+            print(f"[UI] Volume change: {value}% -> {vol:.2f}")
+            
+            self.audio_sink.setVolume(vol)
+            self.settings.setValue("volume", vol)
+            self.vol_slider.setToolTip(f"Volume: {clamped}%")
+        except Exception as e:
+            print(f"[UI ERROR] on_volume_changed: {e}")
 
-    def on_speed_changed(self, value: int):
-        speed_factor = value / 100.0
-        self.settings.setValue("speed", speed_factor)
-        self.speed_slider.setToolTip(f"Speed: {speed_factor}x")
+    def on_speed_changed(self, index: int):
+        """Speed snapping logic using index mapping."""
+        try:
+            # Clamp index
+            idx = max(0, min(len(self.SPEED_OPTIONS) - 1, index))
+            speed_factor = self.SPEED_OPTIONS[idx]
+            
+            print(f"[UI] Speed change: index {index} -> {speed_factor}x")
+            
+            self.settings.setValue("speed", speed_factor)
+            self.speed_slider.setToolTip(f"Speed: {speed_factor}x")
+            
+            # Restart persistent piper to apply speed on the next sentence
+            if self.engine.tts._persistent_piper:
+                print(f"[UI] Resetting persistent piper for speed change ({speed_factor}x)")
+                self.engine.tts.stop_persistent_piper()
+                # Next speaker call will auto-restart with new settings
+                
+        except Exception as e:
+            print(f"[UI ERROR] on_speed_changed: {e}")
 
     def on_clear_memory(self) -> None:
         # Confirm — explicit warning about wiping everything
