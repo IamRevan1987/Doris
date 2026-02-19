@@ -247,7 +247,7 @@ class DorisWindow(QMainWindow):
         self._init_audio_output()
 
         # # INIT UI #
-        self.setWindowTitle("🧑‍🏫 Doris v0.3.0 — Tutor Console (Beta)")
+        self.setWindowTitle("🧑‍🏫 Doris v0.3.1 — Tutor Console (Beta)")
         self.resize(1100, 650)
         self._build_ui()
         self._setup_menu()

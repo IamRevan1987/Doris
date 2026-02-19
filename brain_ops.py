@@ -110,7 +110,7 @@ def ask_the_holocron(question: str) -> str:
     # Informative log for tracking RAG requests
     print(f"[*] Accessing Holocron for: {question}")
     try:
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=90.0) as client:
             # Post the question to the RAG endpoint
             response = client.post(
                 "http://localhost:8000/query",
@@ -336,6 +336,9 @@ class ChatEngine:
 
         # RAG Check
         if should_trigger_rag(text):
+            # Verbal Cue for UI/Audio
+            yield "I am pulling the information you requested, give me a moment... "
+            
             rag_response = ask_the_holocron(text)
             self.history.append(AIMessage(content=rag_response))
             append_turn(self.memory_path, "assistant", rag_response)
