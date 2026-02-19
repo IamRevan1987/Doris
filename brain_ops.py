@@ -133,7 +133,7 @@ class ChatEngine:
     Manages the conversation history (context) and interfaces with Ollama and GhostVoice.
     """
     # Config
-    user_name: str = "David"
+    user_name: str = "Dave"
     model_name: str = "llama3.2:1b"
     base_url: str = "http://127.0.0.1:11434"
     memory_path: Path = Path("data/chat.jsonl")
@@ -150,6 +150,8 @@ class ChatEngine:
     history: List[BaseMessage] = field(default_factory=list, init=False)
     last_tts_wavs: list[str] = field(default_factory=list, init=False)
     last_tts_idx: int = field(default=0, init=False)
+    summary: str = field(default="", init=False)
+    _summarizing: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
         """Initialize LLM, TTS backend, and load memory."""
@@ -262,7 +264,107 @@ class ChatEngine:
         content = str(reply.content).strip()
         self.history.append(AIMessage(content=content))
         append_turn(self.memory_path, "assistant", content)
+        
+        # Check for summarization trigger
+        if len(self.history) > 15: # Arbitrary threshold for raw turns
+            self.summarize_history()
+            
         return content
+
+    def summarize_history(self) -> None:
+        """
+        Compresses the middle of the history into a summary.
+        Keeps the persona/system message and the last 4 turns raw.
+        """
+        if self._summarizing:
+            return
+            
+        print("[ENGINE] Summarizing long history...")
+        if len(self.history) <= 6:
+            return
+            
+        self._summarizing = True
+        try:
+            # Keep system message (0) and last 4 turns
+            keep_last = 4
+            raw_tail = self.history[-keep_last:]
+            to_summarize = self.history[1:-keep_last]
+            
+            # Build a prompt for summarization
+            # Using the same LLM for summarization (llama3.2:1b is fast)
+            prompt = (
+                "Summarize the following conversation history concisely, "
+                "focusing on key facts and user preferences. "
+                "Keep the summary under 100 words.\n\n"
+            )
+            for msg in to_summarize:
+                role = "User" if isinstance(msg, HumanMessage) else "Assistant"
+                prompt += f"{role}: {msg.content}\n"
+
+            with exclusive_execution("llm"):
+                summary_reply = self.llm.invoke([SystemMessage(content="You are a helpful assistant."), HumanMessage(content=prompt)])
+                new_summary = str(summary_reply.content).strip()
+                
+                # Update rolling summary
+                self.summary = new_summary
+                
+                # Reconstruct history: System + Summary + Raw Tail
+                # We update the system prompt or add a summary message
+                new_history = [self.history[0]]
+                new_history.append(SystemMessage(content=f"Context Summary of previous turns: {self.summary}"))
+                new_history.extend(raw_tail)
+                
+                self.history = new_history
+                print(f"[ENGINE] History compressed. New count: {len(self.history)}")
+        except Exception as e:
+            print(f"[SUMMARIZE_ERR] {e}")
+        finally:
+            self._summarizing = False
+
+
+    def stream_send(self, text: str):
+        """
+        Generator that yields tokens from the LLM in real-time.
+        Handles RAG routing and history management internally.
+        """
+        text = text.strip()
+        if not text:
+            return
+
+        self.history.append(HumanMessage(content=text))
+        append_turn(self.memory_path, "user", text)
+
+        # RAG Check
+        if should_trigger_rag(text):
+            rag_response = ask_the_holocron(text)
+            self.history.append(AIMessage(content=rag_response))
+            append_turn(self.memory_path, "assistant", rag_response)
+            # Emit in one go for RAG (it's not natively streaming tokens here usually)
+            yield rag_response
+            return
+
+        # LLM Stream Path
+        full_reply = ""
+        try:
+            with exclusive_execution("llm"):
+                for chunk in self.llm.stream(self.history):
+                    token = str(chunk.content)
+                    full_reply += token
+                    yield token
+        except Exception as e:
+            print(f"[STREAM_ERR] {e}")
+            raise
+
+        # Save to history AFTER completion
+        if full_reply.strip():
+            self.history.append(AIMessage(content=full_reply.strip()))
+            append_turn(self.memory_path, "assistant", full_reply.strip())
+            
+            # Check for summarization trigger
+            if len(self.history) > 15:
+                self.summarize_history()
+
+
 
     def clear_active_memory(self) -> None:
         """

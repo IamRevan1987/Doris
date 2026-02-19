@@ -12,6 +12,7 @@ Behavior preserved strictly.
 # Standard Library
 import sys
 import time
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -19,7 +20,7 @@ from pathlib import Path
 from PyQt6.QtCore import (
     QEvent, QObject, Qt, QThread, QTimer, QUrl, pyqtSignal, QSettings, QIODevice, QByteArray
 )
-from PyQt6.QtGui import QAction, QPixmap
+from PyQt6.QtGui import QAction, QPixmap, QTextCursor
 from PyQt6.QtMultimedia import (
     QSoundEffect, QAudioSink, QAudioFormat, QMediaDevices, QAudio
 )
@@ -90,10 +91,10 @@ def _panel_frame() -> QFrame:
 
 class Worker(QThread):
     """
-    CHAT worker only.
-    Handles the asynchronous communication with the ChatEngine to prevent UI freezing.
-    Emits a single string reply when the LLM/RAG generation is complete.
+    CHAT worker for STREAMING.
+    Emits tokens as they arrive from the ChatEngine.
     """
+    token = pyqtSignal(str)
     done = pyqtSignal(str)
     err = pyqtSignal(str)
 
@@ -104,9 +105,12 @@ class Worker(QThread):
 
     def run(self) -> None:
         try:
-            # Blocking call to engine.send() happens here, off the main thread.
-            reply = self.engine.send(self.text)
-            self.done.emit(str(reply))  # ALWAYS str
+            full_reply = ""
+            for token in self.engine.stream_send(self.text):
+                full_reply += token
+                self.token.emit(token)
+            
+            self.done.emit(full_reply)
         except Exception as e:
             self.err.emit(str(e))
 
@@ -171,6 +175,27 @@ class PortraitResizeFilter(QObject):
         return super().eventFilter(obj, event)
 
 
+class SentenceWorker(QThread):
+    """Worker to synth a single sentence from the persistent piper."""
+    chunk_ready = pyqtSignal(bytes)
+
+    def __init__(self, tts, text):
+        super().__init__()
+        self.tts = tts
+        self.text = text
+        self._is_stopped = False
+
+    def stop(self):
+        self._is_stopped = True
+
+    def run(self):
+        if self.tts._persistent_piper:
+            for chunk in self.tts._persistent_piper.speak(self.text):
+                if self._is_stopped:
+                    break
+                self.chunk_ready.emit(chunk)
+
+
 ##  ##                                                      ##  ##  Main Window Class  ##  ##
 
 class DorisWindow(QMainWindow):
@@ -196,6 +221,12 @@ class DorisWindow(QMainWindow):
         self.is_speaking = False
         self.portrait_pixmap = None
         self.current_worker = None # Track TTS worker specifically for cancellation
+        
+        # # STREAMING STATE #
+        self.current_sentence_buffer = ""
+        self.sentence_terminals = [".", "!", "?", "\n"] # Simple terminals for now
+        self.tts_queue = []
+        self.tts_busy = False
 
         # # SETTINGS (Persistence) #
         # Save/Load user preferences (volume, speed, theme)
@@ -215,6 +246,9 @@ class DorisWindow(QMainWindow):
         self._setup_menu()
         self._load_portrait()
         self.refresh_session_list()
+        
+        # # PRE-WARM #
+        QTimer.singleShot(100, self._prewarm_backend)
         
         # # SHUTDOWN HOOK #
         # Ensure clean exit by stopping threads and audio
@@ -633,23 +667,121 @@ class DorisWindow(QMainWindow):
         self.active_threads.append(worker)
 
         # Worker callbacks
+        worker.token.connect(self._on_token_ready)
         worker.done.connect(self._on_msg_done)
         worker.err.connect(self._on_msg_err)
         worker.finished.connect(lambda: self._cleanup_worker(worker))
         
+        # Reset sentence buffer
+        self.current_sentence_buffer = ""
+        
         self.set_busy(True)
         worker.start()
 
-    def _on_msg_done(self, reply: str) -> None:
-        self.chat_out.append(f"Doris: {reply}\n")
-        self.last_reply_text = reply.strip()
-        self.btn_speak_now.setEnabled(bool(self.last_reply_text))
-        self.send_btn.setEnabled(True)
-        self.chat_in.setEnabled(True)
-        self.chat_in.setFocus()
+    def _on_token_ready(self, token: str) -> None:
+        """Called when a new token arrives from the LLM."""
+        try:
+            # Append to UI
+            self.chat_out.moveCursor(QTextCursor.MoveOperation.End)
+            self.chat_out.insertPlainText(token)
+            
+            # Sentence Buffering for TTS
+            self.current_sentence_buffer += token
+            
+            # Adaptive Chunking for TTS
+            # Look for sentence boundaries while being careful about abbreviations or titles
+            parts = re.split(r'(?<=[.!?\n])\s+', self.current_sentence_buffer)
+            
+            if len(parts) > 1:
+                # We have complete sentences
+                for i in range(len(parts) - 1):
+                    sentence = parts[i].strip()
+                    if sentence and len(sentence) > 1: # Avoid single punct chunks
+                        self._speak_sentence(sentence)
+                
+                # Keep the last fragment
+                self.current_sentence_buffer = parts[-1]
+        except Exception as e:
+            print(f"[STREAM DEBUG] _on_token_ready error: {e}")
+
+
+    def _speak_sentence(self, text: str):
+        """Adds a sentence to the TTS queue."""
+        if not self.chk_speak.isChecked():
+            return
         
-        if self.chk_speak.isChecked():
-            self.on_speak_last()
+        print(f"[STREAM] Queueing sentence: {text}")
+        self.tts_queue.append(text)
+        self._process_tts_queue()
+
+    def _process_tts_queue(self):
+        """Processes the next sentence in the TTS queue if not busy."""
+        if self.tts_busy or not self.tts_queue:
+            return
+            
+        text = self.tts_queue.pop(0)
+        self.tts_busy = True
+        
+        try:
+            # Initialize persistent piper if needed
+            if not self.engine.tts._persistent_piper:
+                speed = self.settings.value("speed", 1.0, type=float)
+                self.engine.tts.start_persistent_piper(speed)
+                
+            # Ensure Audio Sink is ready
+            if not self.audio_sink:
+                self._init_audio_output()
+                
+            if self.audio_sink:
+                if self.audio_sink.state() == QAudio.State.StoppedState:
+                    self.audio_io = self.audio_sink.start()
+
+                # We use SentenceWorker for the persistent piper
+                worker = SentenceWorker(self.engine.tts, text)
+                self.current_worker = worker # Crucial: mark as active worker
+                self.active_threads.append(worker)
+                worker.chunk_ready.connect(self._on_tts_chunk)
+                worker.finished.connect(self._on_sentence_finished)
+                worker.start()
+        except Exception as e:
+            print(f"[STREAM DEBUG] _process_tts_queue error: {e}")
+            self.tts_busy = False
+            self._process_tts_queue()
+
+    def _on_sentence_finished(self):
+        """Called when one sentence is done synthesizing."""
+        worker = self.sender()
+        self._cleanup_worker(worker)
+        self.tts_busy = False
+        # If we still have a current worker and it's this one, clear it
+        if self.current_worker is worker:
+             self.current_worker = None
+        # Move to next
+        self._process_tts_queue()
+
+
+
+    def _on_msg_done(self, reply: str) -> None:
+        try:
+            # Move cursor to end and add a newline if needed
+            self.chat_out.moveCursor(QTextCursor.MoveOperation.End)
+            self.chat_out.insertPlainText("\n\n")
+            
+            self.last_reply_text = reply.strip()
+            self.btn_speak_now.setEnabled(bool(self.last_reply_text))
+            self.send_btn.setEnabled(True)
+            self.chat_in.setEnabled(True)
+            self.chat_in.setFocus()
+            
+            # Flush remaining buffer to TTS if any
+            if self.current_sentence_buffer.strip():
+                self._speak_sentence(self.current_sentence_buffer.strip())
+                self.current_sentence_buffer = ""
+                
+        except Exception as e:
+            print(f"[STREAM DEBUG] _on_msg_done error: {e}")
+            self.send_btn.setEnabled(True)
+            self.chat_in.setEnabled(True)
 
     def _on_msg_err(self, msg: str) -> None:
         self.chat_out.append(f"[BACKEND ERROR] {msg}\n")
@@ -664,12 +796,6 @@ class DorisWindow(QMainWindow):
         worker.deleteLater()
         self.set_busy(False)
 
-    def on_speak_last(self) -> None:
-        """Start TTS Streaming for last reply."""
-        text = self.last_reply_text
-        if not text:
-            return
-            
     def on_speak_last(self) -> None:
         """Start TTS Streaming for last reply."""
         text = self.last_reply_text
@@ -765,10 +891,15 @@ class DorisWindow(QMainWindow):
         """Stop playback and generation immediately."""
         print(f"[DEBUG] on_stop called. Worker={self.current_worker is not None}")
         
+        # Clear queue
+        self.tts_queue.clear()
+        self.tts_busy = False
+        
         if self.current_worker:
             print("[DEBUG] Stopping worker thread...")
             # This sets the worker's internal flag so it stops emitting chunks
-            self.current_worker.stop()
+            if hasattr(self.current_worker, "stop"):
+                self.current_worker.stop()
             self.current_worker = None
         
         # Audio Stop Logic
@@ -791,6 +922,33 @@ class DorisWindow(QMainWindow):
         self.on_stop()
         for t in list(self.active_threads):
             t.wait(1000)
+
+    def _prewarm_backend(self) -> None:
+        """Asynchronously warm up LLM and TTS."""
+        self.status.showMessage("Warming up systems...")
+        
+        class WarmWorker(QThread):
+            def __init__(self, engine, settings):
+                super().__init__()
+                self.engine = engine
+                self.settings = settings
+            def run(self):
+                # 1. Warm LLM (optional dummy call)
+                # self.engine.llm.invoke([SystemMessage(content="warmup")])
+                
+                # 2. Warm Piper
+                speed = self.settings.value("speed", 1.0, type=float)
+                self.engine.tts.start_persistent_piper(speed)
+                print("[WARM] Persistent Piper ready.")
+
+        worker = WarmWorker(self.engine, self.settings)
+        self.active_threads.append(worker)
+        worker.finished.connect(lambda: self._on_warm_done(worker))
+        worker.start()
+
+    def _on_warm_done(self, worker):
+        self.status.showMessage("Systems ready.")
+        self._cleanup_worker(worker)
 
     def trigger_greeting(self) -> None:
         """
@@ -822,7 +980,7 @@ def main() -> None:
     win.show()
 
     # Trigger greeting shortly after show
-    QTimer.singleShot(800, win.trigger_greeting)
+    QTimer.singleShot(1500, win.trigger_greeting)
     QTimer.singleShot(0, win.update_portrait)
 
     sys.exit(app.exec())

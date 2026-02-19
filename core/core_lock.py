@@ -16,22 +16,31 @@ from threading import Lock
 from contextlib import contextmanager
 
 
-# Single global lock shared across the app
-CORE_EXECUTION_LOCK = Lock()
+# Multiple locks for different subsystems
+_LOCKS = {
+    "llm": Lock(),
+    "tts": Lock(),
+    "core": Lock()
+}
 
 @contextmanager
 def exclusive_execution(label: str = "core"):
     """
-        Context manager enforcing exclusive execution.
-
-        Usage:
-            with exclusive_execution("tts"):
-                run_tts()
-
-        The label is for logging / debugging only.
-        """
-    CORE_EXECUTION_LOCK.acquire()
+    Enforces exclusive execution per subsystem.
+    
+    Usage:
+        with exclusive_execution("llm"):
+             # Only one LLM call at a time
+             pass
+             
+        with exclusive_execution("tts"):
+             # Only one TTS call at a time
+             pass
+    """
+    lock = _LOCKS.get(label, _LOCKS["core"])
+    lock.acquire()
     try:
         yield
     finally:
-        CORE_EXECUTION_LOCK.release()
+        lock.release()
+
